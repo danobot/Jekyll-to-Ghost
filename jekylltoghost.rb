@@ -28,7 +28,7 @@ module Jekyll
 
 		def write(dest)
 			File.open(File.join(@site.config['destination'], 'ghost_export.json'), 'w') do |f|
-				f.write(@contents.to_json.to_s)
+				f.write(JSON.pretty_generate(@contents))
 			end
 			true
 		end
@@ -58,32 +58,35 @@ module Jekyll
 
 			site.posts.docs.each do |post|
 
+				# timestamp =Time.now.to_i
 				timestamp = post.date.to_i * 1000
+				author_id = 1
                 
-                author_id = 1
-                if !((post.data['author']).nil?)
-                    author_id = post.data['author']
-                end
-                
+         
+								# "{\"version\":\"0.3.1\",\"atoms\":[],\"cards\":[[\"markdown\",{\"markdown\":\"Fds\"}]],\"markups\":[],\"sections\":[[10,0],[1,\"p\",[]]]}"
+				mobiledoc = generate_mobileloc(post) ;
+				# Jekyll.logger.info post.to_json
 				ex_post = {
 					"id" => id,
 					"title" => post.data['title'],
 					"slug" => post.data['slug'],
-					#"markdown" => post.content,
-					"html" => converter.convert(post.content),
-                    "feature_image" => nil,
-					"featured" => 0,
+					# "markdown" => post.content,
+					# "mobiledoc" => mobiledoc,
+					"mobiledoc" => mobiledoc.to_json.to_s,
+					# "html" => converter.convert(post.content),
+					"feature_image" => processImageUrl(post.data['image']),
+					"featured" => post.data['featured'],
 					"page" => 0,
 					"status" => "published",
-                    "published_at" => timestamp,
-                    "published_by" => 1,
-                    "meta_title" => nil,
-        			"meta_description" => nil,
-                    "author_id" => author_id,
-                    "created_at" => timestamp,
-        			"created_by" => 1,
-        			"updated_at" => timestamp,
-        			"updated_by" => 1
+					"published_at" => timestamp,
+					"published_by" => 1,
+					"meta_title" => post.data['title'],
+					"meta_description" => post.data['excerpt'].to_s.slice!(0, 499),
+					"author_id" => author_id,
+					"created_at" => timestamp,
+					"created_by" => 1,
+					"updated_at" => timestamp,
+					"updated_by" => 1
 				}
 
 				ex_posts.push(ex_post)
@@ -109,12 +112,121 @@ module Jekyll
 			site.static_files << GhostPage.new(site, site.source, site.config['destination'], 'ghost_export.json', export_object)
 
 		end
+		def generate_mobileloc(post) 
+			Jekyll.logger.info(" ##############################################################################################################################")
+			Jekyll.logger.info("  PROCESSING "  + post.data['title'])
+			Jekyll.logger.info(" ##############################################################################################################################")
+			cards = []
+			content = post.content
+			slug = post.data['slug']
+			Jekyll.logger.info post.data['slug']
 
+			# find all occurances of link {% post_url rails/2016-12-15-carrierwave-upload-to-gcp %}
+			# re = "/{% post_url (.*) %}/mU"
+			re = /(\{\%\s?post_url\s?(.*)\s?%\})/
+
+			str = content
+			Jekyll.logger.info "Generating Mobileloc"
+			# Print the match result
+			str.scan(re) do |match|
+				Jekyll.logger.info match
+				
+				new_link = gen_new_link(match[1])
+				Jekyll.logger.info "new link\t\t" + new_link + "\t\t" + match[0] 
+				str = str.gsub(match[0], new_link)
+
+			end
+
+
+			# find all image tag references
+			re = /(\!\[(.*?)\]\(\{\{(.*?)\}\}\))/
+
+			str = str
+			Jekyll.logger.info "Generating Mobileloc"
+			# Print the match result
+			last_one = str
+			str.scan(re) do |match|
+				Jekyll.logger.info "============================ Processing image " + match[0].gsub('\n','') + " ==============================="
+				if last_one
+				# Jekyll.logger.info "Previous last_one\t\t" + last_one.gsub('\n','')
+				Jekyll.logger.info "------------------------------------------------------------------------------------------------------------"
+				
+				# split by image tag ![Caption]({{ "/assets/img/image.jpg" | relative_url }})
+
+					split =	last_one.split( match[0]) # [before, after]
+					# Jekyll.logger.info split
+					# Jekyll.logger.info "Split Before\t\t" + split[0].gsub('\n','')
+					
+					cards << add_markdown_card(split[0])
+
+					# Jekyll.logger.info "Split After\t\t" + split[1].to_s.gsub('\n','')
+					cards << add_image_card(match[1], match[2])
+					last_one = split[1]
+				else
+					Jekyll.logger.info "The image was the last bit of text."
+				end
+			end
+			if last_one
+				cards << add_markdown_card(last_one)
+			end
+
+			return {
+				"version" => '0.3.1',
+				"atoms" => [],
+				# "cards" => [['html', { "html" => converter.convert(post.content)}]],
+				"cards" => cards,
+				"markups" => [],
+				"sections" => generate_sections(cards)
+		}
+		end
+		def generate_sections(cards)
+			sec = []
+			cards.each.with_index { |val,index| 
+				sec << [10, index]
+			
+			}
+			sec << [1, "p", []]
+			return sec
+		end
+		def add_markdown_card(md)
+			return ['markdown', { "markdown" => md}]
+		end
+
+		def add_image_card(caption, url)
+			Jekyll.logger.info url
+			theUrl = processImageUrl(url)
+			Jekyll.logger.info theUrl
+			return ["image", {"src" => theUrl, "caption" => caption}]
+		end
+		
+
+		def add_adsense_card()
+			theUrl = processImageUrl(url)
+			Jekyll.logger.info theUrl
+			return ["image", {"src" => theUrl, "caption" => caption}]
+		end
+
+		def processImageUrl(url)
+			Jekyll.logger.info "URL to be processed " + url.to_s
+			if url.to_s.include?  "|"
+				url = url.to_s.split("|")[0]
+			end
+			return url.to_s.gsub('"','').gsub('/assets/img', '/content/images').gsub('assets/img', '/content/images').strip
+
+		end
+		def gen_new_link(filename)
+
+			# remove date
+			filename.slice!(0, 11)
+			return '/' + filename
+
+		end
 
 		def process_tags(postId, tags, categories)
 			unique_tags = tags | categories
 			unique_tags = unique_tags.map do |t|
-				t = t.chomp(",")
+
+				t = t.to_s.chomp(",")
 				t = t.downcase
 			end
 			@tags = unique_tags | @tags
